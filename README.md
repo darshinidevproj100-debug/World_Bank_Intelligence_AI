@@ -74,10 +74,4 @@ Run in this order: `01_wdi_ingestion.py` → `02_delta_medallion.py` → `03_dat
 
 The notebooks are configuration-dependent examples; they have not been run in the target workspace. Workspace entitlements, Unity Catalog access, optional LangGraph/PDF dependencies, and managed AI services must be verified separately. The WDI Medallion notebook performs a full refresh; document indexing MERGEs chunks separately and does not modify Gold. See [DATABRICKS_RUNBOOK.md](DATABRICKS_RUNBOOK.md).
 
-## Current limitations
 
-- No formal JEV definition was found or implemented; decision behavior is provisional and configurable.
-- Semantic retrieval and hosted LLM generation require external adapters that are not configured here.
-- Deterministic citation/source checks do not prove claim entailment or contradiction absence.
-- No OCR, remote report-PDF download, managed vector backend, or deployed app is included.
-- Finance and project source schemas remain to be selected and connected.
