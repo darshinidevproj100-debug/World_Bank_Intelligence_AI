@@ -1,0 +1,4 @@
+question,expected_agents,expected_source_types
+Show GDP trends for the United Kingdom,data_agent,indicators
+Summarize funding for a development project,financial_agent|project_agent,finances|projects
+Explain a development challenge using reports,data_agent|research_agent,indicators|documents

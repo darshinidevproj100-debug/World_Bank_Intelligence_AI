@@ -1,0 +1,9 @@
+# Optional starter configuration for Databricks Asset Bundles.
+# Validate and adapt to the workspace's supported bundle schema and permissions.
+bundle:
+  name: world-bank-intelligence-ai
+
+targets:
+  dev:
+    mode: development
+    default: true

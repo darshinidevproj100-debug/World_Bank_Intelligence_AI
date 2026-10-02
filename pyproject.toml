@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "world-bank-intelligence-ai"
+version = "0.1.0"
+description = "Databricks-compatible multi-agent public data intelligence starter"
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.31",
+  "pandas>=2.0",
+  "python-dotenv>=1.0",
+  "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+agents = ["langgraph>=0.2"]
+documents = ["pypdf>=5.0"]
+test = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

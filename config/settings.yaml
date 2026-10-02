@@ -1,0 +1,21 @@
+project:
+  name: world_bank_intelligence_ai
+  environment: development
+
+data:
+  default_country: GBR
+  indicators:
+    - NY.GDP.MKTP.CD
+    - SP.POP.TOTL
+    - SL.UEM.TOTL.ZS
+    - SP.DYN.LE00.IN
+
+databricks:
+  catalog: main
+  schema: world_bank_ai
+
+agents:
+  max_retries: 2
+  timeout_seconds: 60
+  routing_mode: keyword_baseline
+  # Do not define JEV logic until its authoritative definition is supplied.
