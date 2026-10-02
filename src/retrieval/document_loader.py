@@ -1,117 +1,141 @@
-"""Load local public text documents and preserve metadata for each chunk."""
+"""Resilient local document loading and a dependency-free keyword baseline."""
 from __future__ import annotations
 
-import re
+import csv
+import hashlib
+import json
 import logging
+import re
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
-from src.retrieval.chunking import chunk_text
+from src.retrieval.chunking import chunk_document
 
-
-SUPPORTED_DOCUMENT_SUFFIXES = {".pdf", ".txt", ".md"}
+SUPPORTED_DOCUMENT_SUFFIXES = {".pdf", ".txt", ".md", ".csv"}
 TOKEN_PATTERN = re.compile(r"[\w.-]+", re.UNICODE)
 STOP_WORDS = {"about", "from", "that", "this", "with", "what", "when", "where", "which", "would"}
 LOGGER = logging.getLogger(__name__)
 
 
-class DocumentChunk(TypedDict):
-    """One text chunk with stable local source and document metadata."""
-
+class DocumentChunk(TypedDict, total=False):
+    """A passage with stable IDs and source metadata."""
+    chunk_id: str
     document_id: str
     title: str
     chunk_index: int
     page_number: int | None
     text: str
     source_url: str
+    metadata: dict[str, Any]
 
 
 def list_documents(folder: str | Path) -> list[Path]:
-    """List local PDF, text, and Markdown files; missing folders are empty."""
-    document_folder = Path(folder)
-    if not document_folder.exists():
+    """Return supported files in deterministic order; absent folders are empty."""
+    root = Path(folder)
+    if not root.exists():
         return []
-    return sorted(
-        document_path
-        for document_path in document_folder.rglob("*")
-        if document_path.is_file() and document_path.suffix.lower() in SUPPORTED_DOCUMENT_SUFFIXES
-    )
+    return sorted(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in SUPPORTED_DOCUMENT_SUFFIXES)
 
 
-def _read_document_pages(document_path: Path) -> tuple[str, list[tuple[int | None, str]]]:
-    """Extract page text and a source title without changing document content."""
-    if document_path.suffix.lower() != ".pdf":
-        return document_path.stem, [(None, document_path.read_text(encoding="utf-8", errors="replace"))]
+def _read_document_pages(path: Path) -> tuple[str, list[tuple[int | None, str]]]:
+    if path.suffix.lower() != ".pdf":
+        if path.suffix.lower() == ".csv":
+            with path.open(encoding="utf-8-sig", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+            return path.stem, [(None, "\n".join(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows))]
+        return path.stem, [(None, path.read_text(encoding="utf-8", errors="replace"))]
     try:
         from pypdf import PdfReader
-    except ImportError as import_error:
-        raise RuntimeError("PDF extraction requires the optional dependency: pip install .[documents]") from import_error
-
-    pdf_reader = PdfReader(str(document_path))
-    document_metadata = pdf_reader.metadata
-    document_title = str(document_metadata.title).strip() if document_metadata and document_metadata.title else document_path.stem
-    return document_title, [
-        (page_number, pdf_page.extract_text() or "")
-        for page_number, pdf_page in enumerate(pdf_reader.pages, start=1)
-    ]
+    except ImportError as exc:
+        raise RuntimeError("PDF extraction requires pypdf: pip install .[documents]") from exc
+    reader = PdfReader(str(path))
+    metadata = reader.metadata
+    title = str(metadata.title).strip() if metadata and metadata.title else path.stem
+    return title, [(number, page.extract_text() or "") for number, page in enumerate(reader.pages, 1)]
 
 
-def load_document_chunks(
-    folder: str | Path, *, chunk_size: int = 1200, overlap: int = 150
-) -> list[DocumentChunk]:
-    """Read local supported documents and attach title, path, page, and chunk metadata."""
-    document_chunks: list[DocumentChunk] = []
-    for document_path in list_documents(folder):
-        document_title, source_pages = _read_document_pages(document_path)
-        resolved_path = str(document_path.resolve())
-        for page_number, page_text in source_pages:
-            for chunk_index, text_chunk in enumerate(
-                chunk_text(page_text, chunk_size=chunk_size, overlap=overlap)
-            ):
-                source_fragment = f"#page={page_number}" if page_number is not None else ""
-                document_chunks.append(
-                    {
-                        "document_id": resolved_path,
-                        "title": document_title,
-                        "chunk_index": chunk_index,
-                        "page_number": page_number,
-                        "text": text_chunk,
-                        "source_url": f"{resolved_path}{source_fragment}#chunk={chunk_index}",
-                    }
-                )
-    LOGGER.info("Loaded %s local document chunks", len(document_chunks))
-    return document_chunks
+def make_document(text: str, *, document_id: str = "inline", title: str = "Untitled",
+                  source: str = "inline", metadata: dict[str, Any] | None = None,
+                  source_url: str | None = None) -> dict[str, Any]:
+    """Create the shared document schema without inferring absent metadata."""
+    safe_metadata = metadata if isinstance(metadata, dict) else {}
+    return {
+        "document_id": document_id, "title": title, "source": source,
+        "source_url": source_url, "country_code": safe_metadata.get("country_code"),
+        "country_name": safe_metadata.get("country_name"),
+        "publication_year": safe_metadata.get("publication_year"),
+        "topic": safe_metadata.get("topic"), "page_number": safe_metadata.get("page_number"),
+        "text": text if isinstance(text, str) else "", "metadata": safe_metadata,
+        "ingested_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
-def retrieve_local_documents(
-    question: str,
-    document_chunks: list[DocumentChunk],
-    *,
-    top_k: int = 3,
-) -> list[DocumentChunk]:
-    """Return the top keyword-overlap chunks using deterministic local ranking.
+def load_documents(folder: str | Path) -> list[dict[str, Any]]:
+    """Load supported files independently, logging and skipping malformed files."""
+    documents: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    seen_content: set[str] = set()
+    root = Path(folder)
+    for path in list_documents(root):
+        try:
+            title, pages = _read_document_pages(path)
+            relative = str(path.relative_to(root)).replace("\\", "/")
+            content_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+            if content_hash in seen_content:
+                LOGGER.info("Skipping duplicate document content at %s", path)
+                continue
+            seen_content.add(content_hash)
+            digest = hashlib.sha256(relative.encode("utf-8")).hexdigest()[:24]
+            if digest in seen:
+                continue
+            seen.add(digest)
+            for page, text in pages:
+                metadata = {"relative_path": relative, "file_type": path.suffix.lower()}
+                documents.append(make_document(text, document_id=digest, title=title,
+                    source=relative, source_url=str(path.resolve()), metadata=metadata,
+                    ))
+                documents[-1]["page_number"] = page
+        except Exception as exc:
+            LOGGER.warning("Skipping document %s (%s): %s", path, type(exc).__name__, exc)
+    return documents
 
-    This baseline requires no embedding service. Retrieved document text is
-    returned as evidence and is never executed as instructions or code.
-    """
+
+def load_document_chunks(folder: str | Path, *, chunk_size: int = 1200,
+                         overlap: int = 150) -> list[DocumentChunk]:
+    """Load documents into stable chunks while retaining old source_url fields."""
+    chunks: list[DocumentChunk] = []
+    for doc in load_documents(folder):
+        for chunk in chunk_document(doc, chunk_size=chunk_size, overlap=overlap):
+            meta = chunk["metadata"]
+            page = doc.get("page_number")
+            fragment = f"#page={page}" if page is not None else ""
+            chunks.append({
+                "chunk_id": chunk["chunk_id"], "document_id": doc["document_id"],
+                "title": doc["title"], "chunk_index": chunk["chunk_index"],
+                "page_number": page, "text": chunk["text"],
+                "source_url": f"{doc['source_url']}{fragment}#chunk={chunk['chunk_index']}",
+                "metadata": meta,
+            })
+    LOGGER.info("Loaded %d document chunks", len(chunks))
+    return chunks
+
+
+def retrieve_local_documents(question: str, document_chunks: list[DocumentChunk], *,
+                             top_k: int = 3) -> list[DocumentChunk]:
+    """Rank local passages by query-term coverage, preserving deterministic ties."""
     if top_k < 1:
         raise ValueError("top_k must be positive")
-    query_terms = {
-        token.casefold() for token in TOKEN_PATTERN.findall(question)
-        if token.casefold() not in STOP_WORDS and len(token) > 1
-    }
+    query_terms = {t.casefold() for t in TOKEN_PATTERN.findall(question)
+                   if t.casefold() not in STOP_WORDS and len(t) > 1}
     if not query_terms:
         return []
-
-    scored_chunks: list[tuple[float, int, DocumentChunk]] = []
-    for original_index, document_chunk in enumerate(document_chunks):
-        document_terms = {
-            token.casefold() for token in TOKEN_PATTERN.findall(
-                f"{document_chunk['title']} {document_chunk['text']}"
-            )
-        }
-        overlap_count = len(query_terms & document_terms)
-        if overlap_count:
-            scored_chunks.append((overlap_count / len(query_terms), original_index, document_chunk))
-    scored_chunks.sort(key=lambda scored_chunk: (-scored_chunk[0], scored_chunk[1]))
-    return [scored_chunk[2] for scored_chunk in scored_chunks[:top_k]]
+    ranked = []
+    for index, chunk in enumerate(document_chunks):
+        terms = {t.casefold() for t in TOKEN_PATTERN.findall(
+            f"{chunk.get('title', '')} {chunk.get('text', '')}")}
+        overlap = len(query_terms & terms)
+        if overlap:
+            ranked.append((overlap / len(query_terms), index, chunk))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [item[2] for item in ranked[:top_k]]

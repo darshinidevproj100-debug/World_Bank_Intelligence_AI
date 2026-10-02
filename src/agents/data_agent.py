@@ -61,9 +61,44 @@ def run_data_agent(question: str, query_tool: IndicatorQueryTool | None = None) 
             (code for code in COUNTRY_CODE_PATTERN.findall(question.upper()) if code in available_country_codes),
             None,
         )
+        country_rows = query_tool.indicator_records[["country_code", "country"]].dropna().drop_duplicates()
+        named_countries = [
+            (str(row.country_code), str(row.country)) for row in country_rows.itertuples(index=False)
+            if str(row.country).casefold() in question.casefold()
+        ]
+        selected_countries = list(dict.fromkeys(
+            [code for code in COUNTRY_CODE_PATTERN.findall(question.upper()) if code in available_country_codes]
+            + [code for code, _ in sorted(named_countries, key=lambda x: -len(x[1]))]
+        ))
+        if requested_country is None and len(named_countries) == 1:
+            requested_country = named_countries[0][0]
         if requested_country is None and len(available_country_codes) == 1:
             requested_country = next(iter(available_country_codes))
         requested_indicator = _choose_indicator(question, available_indicator_codes)
+        if requested_indicator is not None and len(selected_countries) > 1:
+            requested_years = [int(year) for year in YEAR_PATTERN.findall(question)]
+            start_year = min(requested_years) if requested_years else None
+            end_year = max(requested_years) if requested_years else None
+            comparison_records = pd.concat([
+                query_tool.query_indicator(country_code=country_code, indicator_code=requested_indicator,
+                                           start_year=start_year, end_year=end_year)
+                for country_code in selected_countries
+            ], ignore_index=True)
+            observed = comparison_records.loc[comparison_records["value"].notna()]
+            if observed.empty:
+                return AgentResult(agent="data_agent", status="partial",
+                    summary="The requested country comparison has no non-missing observations.",
+                    data=_records_with_json_nulls(comparison_records),
+                    limitations=["No numerical comparison can be computed from missing observations."])
+            latest = observed.sort_values("year").groupby("country_code", as_index=False).tail(1)
+            summaries = [f"{row.country} ({row.country_code}) was {row.value} in {int(row.year)}"
+                         for row in latest.itertuples(index=False)]
+            urls = sorted(set(comparison_records.get("source_url", pd.Series(dtype=str)).dropna().astype(str)))
+            return AgentResult(agent="data_agent", status="success",
+                summary=f"Latest available {requested_indicator} observations: " + "; ".join(summaries) + ".",
+                data=_records_with_json_nulls(comparison_records), sources=urls,
+                limitations=["The indicator values are compared as reported; no causal interpretation is implied."])
+
         if requested_country is None or requested_indicator is None:
             return AgentResult(
                 agent="data_agent", status="partial",

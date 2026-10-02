@@ -1,4 +1,8 @@
 # Databricks notebook source
+# /// script
+# [tool.databricks.environment]
+# environment_version = "6"
+# ///
 """Summarize WDI missingness, key duplication, and year coverage."""
 from pyspark.sql import functions as F
 from src.utils.config import get_table_name

@@ -43,6 +43,18 @@ def test_data_agent_summarizes_observed_data_and_preserves_null_record():
     assert data_result.sources == ["https://example.test/wdi"]
 
 
+def test_data_agent_compares_multiple_countries_from_loaded_evidence():
+    records = wdi_fixture()
+    india = records.iloc[[0, 2]].copy()
+    india["country_code"] = "IND"
+    india["country"] = "India"
+    india["value"] = [2.5, 3.5]
+    tool = WDIQueryTool(pd.concat([records, india], ignore_index=True))
+    result = run_data_agent("Compare GDP for the United Kingdom and India", query_tool=tool)
+    assert result.status == "success"
+    assert "GBR" in result.answer and "IND" in result.answer
+
+
 def test_local_document_retrieval_preserves_chunk_source(tmp_path):
     source_document_path = tmp_path / "climate_note.md"
     source_document_path.write_text("Climate adaptation evidence for rural water resilience.", encoding="utf-8")

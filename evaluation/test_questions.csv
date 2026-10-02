@@ -1,4 +1,15 @@
-question,expected_agents,expected_source_types
-Show GDP trends for the United Kingdom,data_agent,indicators
-Summarize funding for a development project,financial_agent|project_agent,finances|projects
-Explain a development challenge using reports,data_agent|research_agent,indicators|documents
+test_id,question,expected_intent,expected_agent,expected_document_ids,expected_evidence,expected_decision,requires_clarification,risk_level,test_category
+WB001,Show the GDP trend for the United Kingdom,economic,data_agent,,,route_to_agent,false,low,economic_indicator
+WB002,Compare GDP trends for the United Kingdom and India,economic,data_agent,,,route_to_agent,false,low,country_comparison
+WB003,Show portfolio funding for a development project,financial,financial_agent,,,route_to_agent,false,medium,financial_portfolio
+WB004,Find World Bank project information for India,project,project_agent,,,route_to_agent,false,low,projects_operations
+WB005,Search reports about development projects in the United Kingdom,research,research_agent,,,retrieve_more_evidence,false,low,research_reports
+WB006,Summarize the retrieved evidence about report WB-EXAMPLE,research,research_agent,,,retrieve_more_evidence,false,low,report_summary
+WB007,What does the evidence say about a topic with no indexed documents?,research,research_agent,,,return_partial_result,false,low,missing_evidence
+WB008,Show me the figures,ambiguous,clarification_agent,,,request_clarification,true,low,ambiguous
+WB009,Compare the conflicting values in synthetic_fixture_A and synthetic_fixture_B,research,research_agent,synthetic_fixture_A|synthetic_fixture_B,conflicting numeric values,request_review,false,medium,conflicting_evidence
+WB010,Explain why GDP growth happened and recommend the best policy,economic,data_agent,,,request_review,false,high,unsupported_high_impact
+WB011,Find current loans and related projects for India,multi_source,"financial_agent|project_agent",,,route_to_agent,false,medium,multi_source
+WB012,Search this report when the retrieval tool returns an error,research,research_agent,,,retry,false,low,tool_failure
+WB013,Find a document after the retrieval service returns no results,research,research_agent,,,return_partial_result,false,low,retrieval_failure
+WB014,Continue retrieving after the configured step budget is exhausted,workflow,supervisor,,,stop,false,low,budget_exhaustion

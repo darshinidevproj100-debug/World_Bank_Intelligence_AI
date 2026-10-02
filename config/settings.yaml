@@ -11,11 +11,36 @@ data:
     - SP.DYN.LE00.IN
 
 databricks:
-  catalog: main
-  schema: world_bank_ai
+  catalog: workspace
+  schema: default
+
+retrieval:
+  document_storage_path: data/documents
+  chunk_size: 1200
+  chunk_overlap: 150
+  top_k: 5
+  method: bm25
+  embedding_model: ""
+  hybrid_lexical_weight: 0.5
+  hybrid_semantic_weight: 0.5
+
+workflow:
+  max_agent_steps: 8
+  max_retrieval_attempts: 2
+
+logging:
+  level: INFO
+  jsonl_path: data/processed/workflow_traces.jsonl
+
+llm:
+  provider: ""
+  endpoint: ""
+  model: ""
+  # Credentials must come from environment variables or Databricks secrets.
 
 agents:
   max_retries: 2
   timeout_seconds: 60
   routing_mode: keyword_baseline
-  # Do not define JEV logic until its authoritative definition is supplied.
+  decision_policy_mode: provisional
+  # No authoritative JEV definition was found; this is a replaceable policy prototype.

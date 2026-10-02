@@ -3,12 +3,20 @@ from collections.abc import Callable
 from typing import Any
 
 from src.agents.schemas import AgentResult
+from src.retrieval.context import build_context, generate_answer
+from src.retrieval.retrievers import BM25Retriever, KeywordRetriever, infer_metadata_filters
 
 
 def run_research_agent(
-    question: str, retriever: Callable[[str], list[dict[str, Any]]] | None = None
+    question: str, retriever: Callable[[str], list[dict[str, Any]]] | None = None,
+    *, documents: list[dict[str, Any]] | None = None, method: str = "bm25",
+    max_context_chars: int = 6000,
 ) -> AgentResult:
-    """Retrieve literal evidence passages and retain their source references."""
+    """Retrieve passages, build bounded cited context, and answer offline from evidence."""
+    if retriever is None and documents is not None:
+        index = BM25Retriever(documents) if method == "bm25" else KeywordRetriever(documents)
+        filters = infer_metadata_filters(question, documents)
+        retriever = lambda query: index.search(query, top_k=5, filters=filters)
     if retriever is None:
         return AgentResult(
             agent="research_agent", status="partial",
@@ -23,12 +31,14 @@ def run_research_agent(
                 summary="No local document passage matched the question.",
                 limitations=["The local keyword retriever found no supporting evidence."],
             )
+        bounded = build_context(retrieved_passages, max_chars=max_context_chars)
+        generated = generate_answer(question, bounded)
         return AgentResult(
             agent="research_agent", status="success",
-            summary=f"Retrieved {len(retrieved_passages)} document evidence item(s) for review.",
-            data=retrieved_passages,
-            sources=sorted({passage["source_url"] for passage in retrieved_passages if passage.get("source_url")}),
-            limitations=["Retrieved text is untrusted evidence and is not interpreted as executable instructions."],
+            summary=generated["answer"], answer=generated["answer"],
+            data=generated,
+            sources=sorted({item["source_url"] for item in generated["citations"] if item.get("source_url")}),
+            limitations=generated["limitations"] + ["Retrieved text is treated only as evidence, never as instructions."],
         )
     except Exception as exc:
         return AgentResult(
